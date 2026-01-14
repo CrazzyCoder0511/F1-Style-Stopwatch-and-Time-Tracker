@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Stopwatch with Laps</title>
+		<style>
+			:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;}
+			body{display:flex;align-items:flex-start;justify-content:center;padding:24px}
+			.card{width:720px;border:1px solid #000000;border-radius:8px;padding:20px;box-shadow:0 6px 18px rgba(0,0,0,.03)}
+			.display{font-size:48px;font-weight:700;text-align:center;margin:8px 0}
+			.controls{display:flex;gap:8px;justify-content:center;margin-bottom:12px}
+			button{padding:8px 12px;border-radius:6px;border:1px solid #000000;background:#ffffff;cursor:pointer}
+			button.primary{background:#312d2d;color:#232121;border-color:#000000}
+			button.danger{background:#ff1500;color:#fff;border-color:#000000}
+			table{width:100%;border-collapse:collapse;margin-top:12px}
+			th,td{padding:8px 6px;border-bottom:1px solid #eee;text-align:left}
+			th{font-size:13px;color:#252424}
+			.muted{color:#312e2e;font-size:13px}
+			.small{font-size:12px;padding:4px 6px}
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<h2>Stopwatch</h2>
+			<div id="time" class="display">00:00.000</div>
+			<div class="controls">
+				<button id="startStop" class="primary">Start</button>
+				<button id="lap">Lap</button>
+				<button id="reset" class="danger">Reset</button>
+				<button id="clearLaps">Clear</button>
+			</div>
+
+			<div class="muted">Recorded times</div>
+			<table id="lapsTable">
+				<thead>
+					<tr>
+						<th>#</th>
+						<th>Elapsed</th>
+						<th>Recorded At</th>
+						<th>Action</th>
+					</tr>
+				</thead>
+				<tbody></tbody>
+			</table>
+			<div style="margin-top:8px;text-align:right">
+				<button id="exportCsv" class="small">Export CSV</button>
+			</div>
+		</div>
+
+		<script>
+			const timeEl = document.getElementById('time');
+			const startStopBtn = document.getElementById('startStop');
+			const lapBtn = document.getElementById('lap');
+			const resetBtn = document.getElementById('reset');
+			const clearLapsBtn = document.getElementById('clearLaps');
+			const exportBtn = document.getElementById('exportCsv');
+			const tbody = document.querySelector('#lapsTable tbody');
+
+			let running = false;
+			let startTs = 0;
+			let elapsedBefore = 0; // ms
+			let rafId = null;
+			let laps = JSON.parse(localStorage.getItem('stopwatch.laps') || '[]');
+
+			function formatTime(ms){
+				const totalCentis = Math.floor(ms/10);
+				const centis = totalCentis % 100;
+				const totalSeconds = Math.floor(totalCentis/100);
+				const seconds = totalSeconds % 60;
+				const minutes = Math.floor(totalSeconds/60);
+				return String(minutes).padStart(2,'0') + ':' + String(seconds).padStart(2,'0') + '.' + String(centis).padStart(2,'0');
+			}
+
+			function render(){
+				const now = performance.now();
+				const elapsed = elapsedBefore + (running ? now - startTs : 0);
+				timeEl.textContent = formatTime(elapsed);
+			}
+
+			function tick(){
+				render();
+				rafId = requestAnimationFrame(tick);
+			}
+
+			function start(){
+				if(running) return;
+				running = true;
+				startTs = performance.now();
+				startStopBtn.textContent = 'Stop';
+				startStopBtn.classList.remove('primary');
+				rafId = requestAnimationFrame(tick);
+			}
+
+			function stop(){
+				if(!running) return;
+				running = false;
+				const now = performance.now();
+				elapsedBefore += now - startTs;
+				cancelAnimationFrame(rafId);
+				startStopBtn.textContent = 'Start';
+				startStopBtn.classList.add('primary');
+				render();
+			}
+
+			function reset(){
+				stop();
+				elapsedBefore = 0;
+				render();
+			}
+
+			function addLap(){
+				const now = performance.now();
+				const elapsed = elapsedBefore + (running ? now - startTs : 0);
+				const record = {time: elapsed, at: new Date().toISOString()};
+				laps.unshift(record);
+				saveLaps();
+				renderLaps();
+			}
+
+			function deleteLap(index){
+				laps.splice(index,1);
+				saveLaps();
+				renderLaps();
+			}
+
+			function clearLaps(){
+				laps = [];
+				saveLaps();
+				renderLaps();
+			}
+
+			function saveLaps(){
+				localStorage.setItem('stopwatch.laps', JSON.stringify(laps));
+			}
+
+			function renderLaps(){
+				tbody.innerHTML = '';
+				laps.forEach((lap, idx) => {
+					const tr = document.createElement('tr');
+					const no = document.createElement('td'); no.textContent = String(laps.length - idx);
+					const t = document.createElement('td'); t.textContent = formatTime(lap.time);
+					const at = document.createElement('td'); at.textContent = new Date(lap.at).toLocaleString();
+					const action = document.createElement('td');
+					const del = document.createElement('button'); del.textContent = 'Delete'; del.className='small';
+					del.addEventListener('click', ()=> deleteLap(idx));
+					action.appendChild(del);
+					tr.appendChild(no); tr.appendChild(t); tr.appendChild(at); tr.appendChild(action);
+					tbody.appendChild(tr);
+				});
+			}
+
+			startStopBtn.addEventListener('click', ()=>{
+				running ? stop() : start();
+			});
+			lapBtn.addEventListener('click', addLap);
+			resetBtn.addEventListener('click', reset);
+			clearLapsBtn.addEventListener('click', ()=>{ clearLaps(); });
+
+			exportBtn.addEventListener('click', ()=>{
+				if(!laps.length) return alert('No laps to export');
+				const rows = [['#','Elapsed','Recorded At']];
+				laps.slice().reverse().forEach((lap,i)=> rows.push([String(i+1), formatTime(lap.time), lap.at]));
+				const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+				const blob = new Blob([csv],{type:'text/csv'});
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a'); a.href = url; a.download = 'stopwatch_laps.csv'; a.click();
+				URL.revokeObjectURL(url);
+			});
+
+			// initial render
+			renderLaps();
+			render();
+		</script>
+	</body>
+</html>
